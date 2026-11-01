@@ -275,6 +275,11 @@ ul { list-style: none; }
 .dialog .stepper { background: var(--line); }
 .dialog .stepper button { background: var(--surface); color: var(--ink); }
 .dialog .note { font-size: 16px; line-height: 1.35; color: var(--muted); }
+.dialog h3 { margin: 6px 0 -8px; font-size: 14px; font-weight: 700; color: var(--muted); }
+.steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; font-size: 17px; line-height: 1.35; }
+.step-time { font-size: 14px; font-weight: 700; color: var(--muted); white-space: nowrap; }
+.dialog:has(.steps) { max-width: 560px; }
+.dialog .actions { position: sticky; bottom: -24px; margin: 6px -24px -24px; padding: 12px 24px 24px; background: var(--surface); }
 .adhocbar { display: flex; flex-wrap: wrap; gap: 8px; }
 .adhocbar button { min-height: 48px; padding: 0 18px; border-radius: 12px; background: var(--mustard); color: var(--on-mustard); font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
 .day.spontan { background: var(--mustard); color: var(--on-mustard); flex: 0 0 auto; }
@@ -414,6 +419,7 @@ button:active:not(:disabled) { transform: scale(0.98); }
   .dialog::before { content: ""; align-self: center; flex-shrink: 0; width: 44px; height: 5px; margin: -8px 0 2px; border-radius: 3px; background: var(--muted); opacity: 0.45; }
   .dialog { max-width: none; max-height: 90%; border-radius: 22px 22px 0 0; padding: 22px 16px calc(16px + var(--safe-area-inset-bottom, 0px)); }
   .actions button { flex: 1 1 100%; }
+  .dialog .actions { bottom: calc(-16px - var(--safe-area-inset-bottom, 0px)); margin: 6px -16px calc(-16px - var(--safe-area-inset-bottom, 0px)); padding: 12px 16px calc(16px + var(--safe-area-inset-bottom, 0px)); }
   .toast { bottom: calc(76px + var(--safe-area-inset-bottom, 0px)); }
 }
 `;
@@ -727,7 +733,7 @@ class KuechenplanPanel extends HTMLElement {
       .join("<br>");
     let action = "";
     if (day.recipe) {
-      action = `<button type="button" class="primary" data-action="cook" data-value="${esc(day.date)}">${isToday ? "Jetzt kochen" : "Rezept ansehen"}${icon(ICONS.arrow, 24)}</button>`;
+      action = `<button type="button" class="primary" data-action="day-open" data-value="${esc(day.date)}">Rezept ansehen${icon(ICONS.arrow, 24)}</button>`;
     } else if (isToday) {
       action = `<button type="button" class="primary" data-action="done-plain" data-value="${esc(day.date)}">Erledigt</button>`;
     }
@@ -754,7 +760,7 @@ class KuechenplanPanel extends HTMLElement {
         </button>
       </div>`;
     }
-    const action = swapping ? "swap-to" : day.recipe ? "cook" : "swap-start";
+    const action = swapping ? "swap-to" : day.recipe ? "day-open" : "swap-start";
     const sub = [day.minutes ? `${day.minutes} Min.` : null, day.note || null]
       .filter(Boolean)
       .join(" · ");
@@ -797,7 +803,7 @@ class KuechenplanPanel extends HTMLElement {
 
   _renderAdhocRow(meal) {
     return `<div class="day spontan">
-      <button type="button" class="open" data-action="cook-adhoc" data-value="${esc(meal.id)}">
+      <button type="button" class="open" data-action="adhoc-open" data-value="${esc(meal.id)}">
         <span class="text">
           <span class="title display">${esc(meal.title)}</span>
           <span class="sub">Spontan · ${esc(meal.minutes)} Min. · ${esc(meal.servings)} Portionen</span>
@@ -1183,12 +1189,31 @@ class KuechenplanPanel extends HTMLElement {
       return `<li class="need"><span>${esc(fmtAmount(amount, item.unit))} ${esc(item.name)}</span>
         <span class="state ${style}">${esc(state)}</span></li>`;
     });
-    const buttons = missing
-      ? `<button type="button" class="main" data-action="recipe-shop">Einkaufen und kochen</button>
-         <button type="button" data-action="recipe-cook">Alles da, jetzt kochen</button>`
-      : `<button type="button" class="main" data-action="recipe-cook">Jetzt kochen</button>`;
+    const { date, adhocId } = this._recipe;
+    let buttons;
+    if (date || adhocId) {
+      buttons = `<button type="button" class="main" data-action="recipe-start">Jetzt kochen</button>
+        ${date ? '<button type="button" data-action="recipe-move">Auf anderen Tag legen</button>' : ""}`;
+    } else if (missing) {
+      buttons = `<button type="button" class="main" data-action="recipe-shop">Einkaufen und kochen</button>
+         <button type="button" data-action="recipe-cook">Alles da, jetzt kochen</button>`;
+    } else {
+      buttons = '<button type="button" class="main" data-action="recipe-cook">Jetzt kochen</button>';
+    }
+    const when = [
+      `${recipe.minutes} Minuten`,
+      date ? dayLong(date) : adhocId ? "Spontan" : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const steps = recipe.steps
+      .map(
+        (step) => `<li>${esc(step.text)}${step.minutes ? ` <span class="step-time">${esc(step.minutes)} Min.</span>` : ""}</li>`,
+      )
+      .join("");
     return `<div class="sheet"><div class="dialog" role="dialog" aria-modal="true" aria-label="${esc(recipe.name)}">
       <h2 class="display">${esc(recipe.name)}</h2>
+      <p class="note">${esc(when)}</p>
       ${recipe.summary ? `<p class="note">${esc(recipe.summary)}</p>` : ""}
       <div class="stepper"><span>${servings} ${servings === 1 ? "Portion" : "Portionen"}</span>
         <div>
@@ -1196,7 +1221,9 @@ class KuechenplanPanel extends HTMLElement {
           <button type="button" data-action="recipe-servings" data-value="1" aria-label="Mehr Portionen">+</button>
         </div>
       </div>
+      <h3>Zutaten</h3>
       <ul>${rows.join("")}</ul>
+      ${steps ? `<h3>So geht’s</h3><ol class="steps">${steps}</ol>` : ""}
       <div class="actions">
         ${buttons}
         <button type="button" data-action="recipe-close">Schließen</button>
@@ -1399,8 +1426,7 @@ class KuechenplanPanel extends HTMLElement {
     const day = this._data.days.find((item) => item.date === date);
     this._cook = { date, adhocId: null, step: 0, servings: day?.servings || day?.recipe?.servings || 2, rating: false };
     this._stopTimer();
-    // Looking at a recipe for another day is not cooking yet.
-    if (date === this._data.today) this._saveCook();
+    this._saveCook();
     this._on_view("kochen");
   }
 
@@ -1445,6 +1471,49 @@ class KuechenplanPanel extends HTMLElement {
   _on_recipes_now() {
     this._recipeFilter = "now";
     this._on_view("rezepte");
+  }
+
+  _on_day_open(date) {
+    const day = this._data.days.find((item) => item.date === date);
+    if (!day?.recipe) return;
+    this._recipe = { id: day.recipe.id, servings: day.servings || day.recipe.servings, date };
+    this._render();
+  }
+
+  _on_adhoc_open(id) {
+    const meal = this._data.adhoc.find((item) => item.id === id);
+    if (!meal) return;
+    this._recipe = { id: meal.recipe_id, servings: meal.servings, adhocId: id };
+    this._render();
+  }
+
+  _on_recipe_start() {
+    const { date, adhocId, servings } = this._recipe;
+    this._recipe = null;
+    if (date) {
+      const running = this._cook?.date === date ? this._cook : null;
+      if (running) {
+        running.servings = servings;
+        this._saveCook();
+        this._on_view("kochen");
+      } else {
+        this._on_cook(date);
+        this._cook.servings = servings;
+        this._saveCook();
+        this._render();
+      }
+    } else {
+      if (this._cook?.adhocId !== adhocId) this._on_cook_adhoc(adhocId);
+      this._cook.servings = servings;
+      this._saveCook();
+      this._on_view("kochen");
+    }
+  }
+
+  _on_recipe_move() {
+    const { date } = this._recipe;
+    this._recipe = null;
+    this._on_swap_start(date);
   }
 
   _on_recipe_open(id) {
