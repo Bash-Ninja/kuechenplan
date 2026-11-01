@@ -13,6 +13,8 @@ Kalender, Einkaufslisten, Sensoren und die Küchen-Ansicht folgen automatisch au
   Kochmodus. Der Wochenplan bleibt unberührt, gekocht wird trotzdem für künftige Pläne gemerkt.
 - **Was kann ich kochen?** Rezepte nach dem sortiert, was da ist und was bald abläuft, in der App und über
   das Tool `what_can_i_cook`, mit dem Claude auch neue Gerichte aus dem Vorrat vorschlagen kann.
+- **Weiterkochen:** Schritt, Portionen und Timer liegen auf dem Server. Wer die App schließt, landet beim
+  Öffnen wieder an derselben Stelle, auch auf einem anderen Gerät.
 - **Inventur:** Geführte Zählung in der App, oder per Chat und Foto über Claude. Was bald abläuft,
   bekommt der Planer zuerst genannt.
 
@@ -47,7 +49,8 @@ Alle Tools gibt es auch als Dienste `kuechenplan.<tool>`, zum Beispiel für Auto
 - `binary_sensor.kuchenplan_plan_fehlt`, `binary_sensor.kuchenplan_reistag`,
   `binary_sensor.kuchenplan_inventur_fallig`
 - `calendar.kuchenplan_essensplan`, `todo.kuchenplan_einkauf_<laden>`
-- Ereignisse `kuechenplan_plan_applied` und `kuechenplan_meal_cooked`
+- Ereignisse `kuechenplan_plan_applied`, `kuechenplan_meal_cooked` und `kuechenplan_timer_finished`
+  (der Timer ist abgelaufen, gut für eine Push-Nachricht, wenn die App zu ist)
 - Direktlinks für Push-Nachrichten: `/kuechenplan?view=einkauf&store=rewe`, `view=kuehlschrank`, `view=kochen`
 
 ## Tests

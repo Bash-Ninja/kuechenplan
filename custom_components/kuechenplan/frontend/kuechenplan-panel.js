@@ -430,6 +430,16 @@ class KuechenplanPanel extends HTMLElement {
       ? params.get("view")
       : "woche";
     this._store = params.get("store");
+    this._explicitView = params.has("view");
+    this._clientId = Math.random().toString(36).slice(2);
+    this._resumeChecked = false;
+    document.addEventListener("visibilitychange", () => {
+      // The screen lock is dropped whenever the app goes to the background.
+      if (!document.hidden && this._view === "kochen") {
+        this._wake = null;
+        this._keepAwake();
+      }
+    });
     this._data = null;
     this._swapFrom = null;
     this._cook = null;
@@ -460,7 +470,10 @@ class KuechenplanPanel extends HTMLElement {
   disconnectedCallback() {
     this._unsubscribe?.then((off) => off()).catch(() => {});
     this._unsubscribe = null;
-    this._stopTimer();
+    clearInterval(this._timerTick);
+    this._timer = null;
+    this._cook = null;
+    this._resumeChecked = false;
     this._releaseWake();
   }
 
@@ -479,10 +492,73 @@ class KuechenplanPanel extends HTMLElement {
     this._unsubscribe = this._hass.connection.subscribeMessage(
       (data) => {
         this._data = data;
+        this._syncCooking();
         this._render();
       },
       { type: "kuechenplan/subscribe" },
     );
+  }
+
+  _syncCooking() {
+    const session = this._data.cooking;
+    if (!session) {
+      if (this._cook?.saved) {
+        this._cook = null;
+        this._stopTimer();
+      }
+      this._resumeChecked = true;
+      return;
+    }
+    // Own changes are already applied, an echo could undo a newer tap.
+    if (!this._cook || session.client !== this._clientId) {
+      this._cook = {
+        date: session.date ?? null,
+        adhocId: session.adhoc_id ?? null,
+        step: session.step,
+        servings: session.servings,
+        rating: Boolean(session.rating),
+        tab: this._cook?.tab,
+        saved: true,
+      };
+      clearInterval(this._timerTick);
+      this._timer = null;
+      if (session.timer_ends_at) {
+        this._timer = {
+          step: session.timer_step,
+          endsAt: session.timer_ends_at,
+          rung: Date.now() >= session.timer_ends_at,
+        };
+        this._runTimer();
+      }
+    }
+    if (!this._resumeChecked) {
+      this._resumeChecked = true;
+      if (!this._explicitView) {
+        this._view = "kochen";
+        this._keepAwake();
+      }
+    }
+  }
+
+  _saveCook() {
+    const cook = this._cook;
+    if (!cook) return;
+    cook.saved = true;
+    this._hass.connection
+      .sendMessagePromise({
+        type: "kuechenplan/cooking",
+        session: {
+          client: this._clientId,
+          date: cook.date,
+          adhoc_id: cook.adhocId,
+          step: cook.step,
+          servings: cook.servings,
+          rating: Boolean(cook.rating),
+          timer_ends_at: this._timer?.endsAt ?? null,
+          timer_step: this._timer?.step ?? null,
+        },
+      })
+      .catch(() => {});
   }
 
   async _call(operation, args = {}) {
@@ -605,7 +681,11 @@ class KuechenplanPanel extends HTMLElement {
       ${swapping ? `<div class="banner" role="status"><span>${esc(dayLong(swapping))}: Mit welchem Tag tauschen?</span><button type="button" data-action="swap-cancel">Abbrechen</button></div>` : ""}
       ${this._renderHero(hero)}
       <section class="days" aria-label="Weitere Tage">
-        ${this._data.adhoc.map((meal) => this._renderAdhocRow(meal)).join("")}
+        ${this._renderResumeRow()}
+        ${this._data.adhoc
+          .filter((meal) => meal.id !== this._data.cooking?.adhoc_id)
+          .map((meal) => this._renderAdhocRow(meal))
+          .join("")}
         ${swapHero || !hero ? "" : this._renderDayRow(hero.date, hero)}
         ${rows.map(({ iso, day }) => this._renderDayRow(iso, day)).join("")}
       </section>
@@ -683,6 +763,24 @@ class KuechenplanPanel extends HTMLElement {
         ${mark}
       </button>
       ${swapping ? "" : `<button type="button" class="swap" data-action="swap-start" data-value="${iso}" aria-label="${esc(day.title)} auf einen anderen Tag legen">${icon(ICONS.swap, 24)}</button>`}
+    </div>`;
+  }
+
+  _renderResumeRow() {
+    const session = this._data.cooking;
+    if (!session) return "";
+    const progress = session.rating
+      ? "Fertig gekocht, noch bewerten"
+      : `Weiter bei Schritt ${Math.min(session.step + 1, session.step_count)} von ${session.step_count}`;
+    return `<div class="day spontan">
+      <button type="button" class="open" data-action="cook-resume">
+        <span class="text">
+          <span class="title display">${esc(session.title)}</span>
+          <span class="sub">${esc(progress)}</span>
+        </span>
+        ${icon(ICONS.arrow, 24)}
+      </button>
+      <button type="button" class="swap" data-action="cook-cancel" aria-label="Kochen von ${esc(session.title)} abbrechen">${icon(ICONS.close, 24)}</button>
     </div>`;
   }
 
@@ -844,6 +942,13 @@ class KuechenplanPanel extends HTMLElement {
   _startTimer(minutes) {
     this._stopTimer();
     this._timer = { step: this._cook.step, endsAt: Date.now() + minutes * 60000, rung: false };
+    this._saveCook();
+    this._runTimer();
+    this._render();
+  }
+
+  _runTimer() {
+    clearInterval(this._timerTick);
     // Only the digits change: redrawing the page every second would swallow taps.
     this._timerTick = setInterval(() => {
       const timer = this._timer;
@@ -858,7 +963,6 @@ class KuechenplanPanel extends HTMLElement {
       const time = this._root.querySelector(".timer .time");
       if (time && label) time.textContent = label;
     }, 1000);
-    this._render();
   }
 
   _timerLabel() {
@@ -1235,16 +1339,34 @@ class KuechenplanPanel extends HTMLElement {
 
   _on_cook(date) {
     const day = this._data.days.find((item) => item.date === date);
-    this._cook = { date, step: 0, servings: day?.servings || day?.recipe?.servings || 2, rating: false };
+    this._cook = { date, adhocId: null, step: 0, servings: day?.servings || day?.recipe?.servings || 2, rating: false };
     this._stopTimer();
+    // Looking at a recipe for another day is not cooking yet.
+    if (date === this._data.today) this._saveCook();
     this._on_view("kochen");
+  }
+
+  _on_cook_resume() {
+    this._on_view("kochen");
+  }
+
+  _on_cook_cancel() {
+    this._cook = null;
+    this._stopTimer();
+    this._hass.connection
+      .sendMessagePromise({ type: "kuechenplan/cooking", session: null })
+      .catch(() => {});
+    this._render();
   }
 
   _on_cook_adhoc(id) {
     const meal = this._data.adhoc.find((item) => item.id === id);
     if (!meal) return;
-    this._cook = { date: null, adhocId: id, step: 0, servings: meal.servings, rating: false };
-    this._stopTimer();
+    if (this._cook?.adhocId !== id) {
+      this._cook = { date: null, adhocId: id, step: 0, servings: meal.servings, rating: false };
+      this._stopTimer();
+    }
+    this._saveCook();
     this._on_view("kochen");
   }
 
@@ -1302,6 +1424,7 @@ class KuechenplanPanel extends HTMLElement {
     if (meal) {
       this._cook = { date: null, adhocId: meal.id, step: 0, servings, rating: false };
       this._stopTimer();
+      this._saveCook();
       this._on_view("kochen");
     } else {
       this._render();
@@ -1310,17 +1433,20 @@ class KuechenplanPanel extends HTMLElement {
 
   _on_servings(delta) {
     this._cook.servings = Math.max(1, this._cook.servings + Number(delta));
+    this._saveCook();
     this._render();
   }
 
   _on_step(delta) {
     this._cook.step = Math.max(0, this._cook.step + Number(delta));
+    this._saveCook();
     this._render();
   }
 
   _on_cook_finish() {
     this._stopTimer();
     this._cook.rating = true;
+    this._saveCook();
     this._render();
   }
 
@@ -1344,6 +1470,7 @@ class KuechenplanPanel extends HTMLElement {
 
   _on_timer_stop() {
     this._stopTimer();
+    this._saveCook();
     this._render();
   }
 

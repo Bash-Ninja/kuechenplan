@@ -153,6 +153,37 @@ def _ws_call(
     connection.send_result(msg["id"], result)
 
 
+@websocket_api.websocket_command(
+    {
+        "type": f"{DOMAIN}/cooking",
+        p.Required("session"): p.Any(
+            None,
+            p.Schema(
+                {
+                    p.Required("client"): str,
+                    p.Required("step"): int,
+                    p.Required("servings"): int,
+                    p.Optional("date"): p.Any(str, None),
+                    p.Optional("adhoc_id"): p.Any(str, None),
+                    p.Optional("rating"): bool,
+                    p.Optional("timer_ends_at"): p.Any(int, float, None),
+                    p.Optional("timer_step"): p.Any(int, None),
+                }
+            ),
+        ),
+    }
+)
+@callback
+def _ws_cooking(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Remember where cooking stands, so any device can continue there."""
+    _active_store(hass).async_set_cooking(msg["session"])
+    connection.send_result(msg["id"])
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up what stays registered across config entry reloads."""
     await hass.http.async_register_static_paths(
@@ -160,6 +191,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     websocket_api.async_register_command(hass, _ws_subscribe)
     websocket_api.async_register_command(hass, _ws_call)
+    websocket_api.async_register_command(hass, _ws_cooking)
     _async_register_services(hass)
     return True
 
@@ -169,6 +201,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: KuechenplanConfigEntry) 
     store = KuechenplanStore(hass, _settings(entry))
     await store.async_load()
     entry.runtime_data = store
+    entry.async_on_unload(store.async_cancel_timer)
 
     entry.async_on_unload(llm.async_register_api(hass, KuechenplanAPI(hass, store)))
 

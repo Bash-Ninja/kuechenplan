@@ -6,9 +6,11 @@ import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.setup import async_setup_component
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
+    async_fire_time_changed,
 )
 
 from custom_components.kuechenplan.const import (
@@ -18,6 +20,7 @@ from custom_components.kuechenplan.const import (
     CONF_STORES,
     DOMAIN,
     EVENT_PLAN_APPLIED,
+    EVENT_TIMER_FINISHED,
 )
 
 CLIENT_ID = "https://claude.example/"
@@ -518,3 +521,60 @@ async def test_what_can_i_cook_ranks_by_what_is_at_home(mcp: Client) -> None:
     result = await mcp.call("what_can_i_cook", servings=4)
     pad = next(item for item in result["needs_a_little"] if item["name"] == "Pad Kra Pao")
     assert "100 g Hackfleisch" in pad["missing"]
+
+
+async def test_cooking_session_survives_and_ends_with_the_meal(
+    hass: HomeAssistant, mcp: Client, hass_ws_client, freezer
+) -> None:
+    """Any device continues where cooking stopped, the timer runs on the server."""
+    await mcp.call("apply_week_plan", days=[{"date": MONDAY, "recipe": PAD_KRA_PAO}])
+    await mcp.call("set_day", date=THURSDAY, recipe=LACHS)
+    timers = async_capture_events(hass, EVENT_TIMER_FINISHED)
+    client = await hass_ws_client(hass)
+
+    async def snapshot() -> dict:
+        await client.send_json_auto_id({"type": f"{DOMAIN}/subscribe"})
+        subscription = (await client.receive_json())["id"]
+        message = await client.receive_json()
+        await client.send_json_auto_id(
+            {"type": "unsubscribe_events", "subscription": subscription}
+        )
+        await client.receive_json()
+        return message["event"]
+
+    ends_at = dt_util.utcnow().timestamp() * 1000 + 300000
+    await client.send_json_auto_id(
+        {
+            "type": f"{DOMAIN}/cooking",
+            "session": {
+                "client": "iphone",
+                "date": MONDAY,
+                "step": 1,
+                "servings": 3,
+                "timer_ends_at": ends_at,
+                "timer_step": 1,
+            },
+        }
+    )
+    assert (await client.receive_json())["success"]
+    assert (await snapshot())["cooking"]["step_count"] == 2
+
+    # Closing everything: the session and the armed timer come back after a reload.
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    client = await hass_ws_client(hass)
+    session = (await snapshot())["cooking"]
+    assert (session["step"], session["servings"]) == (1, 3)
+    assert session["title"] == "Pad Kra Pao"
+
+    freezer.tick(301)
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert [event.data["title"] for event in timers] == ["Pad Kra Pao"]
+
+    # The session follows its meal to another day and ends once it is cooked.
+    await mcp.call("swap_days", first=MONDAY, second=TUESDAY)
+    assert (await snapshot())["cooking"]["date"] == TUESDAY
+    await mcp.call("mark_cooked", date=TUESDAY, rating=3)
+    assert (await snapshot())["cooking"] is None

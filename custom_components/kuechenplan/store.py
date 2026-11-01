@@ -1,22 +1,26 @@
 """Household data of the Küchenplan integration and the logic working on it."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from hashlib import sha1
 from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_track_point_in_utc_time
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util, slugify
 from homeassistant.util.ulid import ulid_now
 
 from .const import (
     ADHOC_RETENTION_DAYS,
+    COOKING_RETENTION_HOURS,
     DEFAULT_LOCATION,
     DEFAULT_SECTIONS,
     DOMAIN,
+    EVENT_TIMER_FINISHED,
     EXPIRING_DAYS,
     FALLBACK_SECTION,
     HISTORY_DAYS,
@@ -113,6 +117,8 @@ class KuechenplanStore:
         self.store_sections: dict[str, list[str]] = {}
         self.adhoc: list[dict[str, Any]] = []
         self.cook_log: list[dict[str, Any]] = []
+        self.cooking: dict[str, Any] | None = None
+        self._cancel_timer: Callable[[], None] | None = None
         self.shopping: list[dict[str, Any]] = []
 
     async def async_load(self) -> None:
@@ -129,7 +135,9 @@ class KuechenplanStore:
             self.store_sections = data["store_sections"]
             self.adhoc = data.get("adhoc", [])
             self.cook_log = data.get("cook_log", [])
+            self.cooking = data.get("cooking")
         self.async_refresh(notify=False)
+        self._arm_timer()
 
     @callback
     def async_refresh(self, notify: bool = True) -> None:
@@ -141,6 +149,13 @@ class KuechenplanStore:
             dt_util.utcnow() - timedelta(days=ADHOC_RETENTION_DAYS)
         ).isoformat()
         self.adhoc = [meal for meal in self.adhoc if meal["created_at"] >= stale]
+        oldest = (
+            dt_util.utcnow() - timedelta(hours=COOKING_RETENTION_HOURS)
+        ).isoformat()
+        if self.cooking and (
+            self.cooking["updated_at"] < oldest or self.cooking_view() is None
+        ):
+            self.cooking = None
         self._rebuild_shopping()
         if notify:
             self._async_changed()
@@ -323,6 +338,7 @@ class KuechenplanStore:
         """Remove a planned day."""
         if self.days.pop(when.isoformat(), None) is None:
             raise HomeAssistantError(f"Nothing planned on {when}")
+        self._end_cooking(day_key=when.isoformat())
         self._rebuild_shopping()
         self._async_changed()
 
@@ -338,6 +354,10 @@ class KuechenplanStore:
             self.days[second_key] = {**first_day, "date": second_key}
         if second_day is not None:
             self.days[first_key] = {**second_day, "date": first_key}
+        if self.cooking and self.cooking.get("date") in (first_key, second_key):
+            self.cooking["date"] = (
+                second_key if self.cooking["date"] == first_key else first_key
+            )
         self._rebuild_shopping()
         self._async_changed()
 
@@ -358,6 +378,7 @@ class KuechenplanStore:
         if status == STATUS_COOKED and day["status"] != STATUS_COOKED:
             used = self._consume_inventory(day, servings)
         day["status"] = status
+        self._end_cooking(day_key=when.isoformat())
         if servings:
             day["servings"] = servings
         if rating is not None:
@@ -401,6 +422,76 @@ class KuechenplanStore:
                 if remaining <= EPSILON:
                     break
         return used
+
+    # --- Cooking session ---
+
+    def cooking_view(self) -> dict[str, Any] | None:
+        """Return the running session, if its meal still exists."""
+        session = self.cooking
+        if session is None:
+            return None
+        recipe = None
+        if session.get("adhoc_id"):
+            for meal in self.adhoc:
+                if meal["id"] == session["adhoc_id"]:
+                    recipe = self.recipes.get(meal["recipe_id"])
+        elif day := self.days.get(session.get("date") or ""):
+            if day["status"] == STATUS_PLANNED:
+                recipe = self._meal_recipe(day)
+        if recipe is None:
+            return None
+        return {
+            **session,
+            "title": recipe["name"],
+            "step_count": len(recipe["steps"]),
+        }
+
+    @callback
+    def async_set_cooking(self, session: dict[str, Any] | None) -> None:
+        """Remember where cooking stands, or end the session."""
+        self.cooking = (
+            {**session, "updated_at": dt_util.utcnow().isoformat()} if session else None
+        )
+        self._arm_timer()
+        self._async_changed()
+
+    def _end_cooking(
+        self, day_key: str | None = None, adhoc_id: str | None = None
+    ) -> None:
+        """End the session when the meal it belongs to is done or gone."""
+        if self.cooking and (
+            (day_key and self.cooking.get("date") == day_key)
+            or (adhoc_id and self.cooking.get("adhoc_id") == adhoc_id)
+        ):
+            self.cooking = None
+            self._arm_timer()
+
+    @callback
+    def async_cancel_timer(self) -> None:
+        """Stop waiting for the running timer."""
+        if self._cancel_timer:
+            self._cancel_timer()
+            self._cancel_timer = None
+
+    def _arm_timer(self) -> None:
+        """Announce the end of the timer, the app may be closed by then."""
+        self.async_cancel_timer()
+        ends_at = self.cooking.get("timer_ends_at") if self.cooking else None
+        if not ends_at:
+            return
+        when = dt_util.utc_from_timestamp(ends_at / 1000)
+        if when <= dt_util.utcnow():
+            return
+
+        @callback
+        def _finished(_: datetime) -> None:
+            self._cancel_timer = None
+            view = self.cooking_view()
+            self.hass.bus.async_fire(
+                EVENT_TIMER_FINISHED, {"title": view["title"] if view else None}
+            )
+
+        self._cancel_timer = async_track_point_in_utc_time(self.hass, _finished, when)
 
     # --- Ad hoc meals ---
 
@@ -451,6 +542,7 @@ class KuechenplanStore:
     def async_remove_adhoc(self, meal_id: str) -> None:
         """Drop an ad hoc meal and what it still needed."""
         self.adhoc.remove(self._find_adhoc(meal_id))
+        self._end_cooking(adhoc_id=meal_id)
         self._rebuild_shopping()
         self._async_changed()
 
@@ -466,6 +558,7 @@ class KuechenplanStore:
         meal = self._find_adhoc(meal_id)
         used = self._consume_inventory(meal, servings)
         self.adhoc.remove(meal)
+        self._end_cooking(adhoc_id=meal_id)
         self.cook_log.append(
             {
                 "date": self.today().isoformat(),
@@ -951,6 +1044,7 @@ class KuechenplanStore:
             "locations": LOCATIONS,
             "audit": self.audit_view(),
             "adhoc": [self.adhoc_view(meal) for meal in self.adhoc],
+            "cooking": self.cooking_view(),
             "recipes": [
                 {
                     **self.recipes[item["id"]],
@@ -1171,4 +1265,5 @@ class KuechenplanStore:
             "store_sections": self.store_sections,
             "adhoc": self.adhoc,
             "cook_log": self.cook_log,
+            "cooking": self.cooking,
         }
