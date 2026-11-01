@@ -311,11 +311,14 @@ ul { list-style: none; }
 #root { height: 100%; }
 button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; transition: transform 90ms ease-out; }
 button:active:not(:disabled) { transform: scale(0.98); }
-.content { display: flex; flex-direction: column; padding-top: var(--safe-area-inset-top, 0px); padding-right: var(--safe-area-inset-right, 0px); overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.app { background: var(--ground); padding-top: var(--safe-area-inset-top, 0px); }
+.app.v-kochen { background: #16201b; }
+.app.v-inventur { background: var(--mustard); }
+.content { display: flex; flex-direction: column; padding-right: var(--safe-area-inset-right, 0px); overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .content > * { flex: 1 0 auto; }
 .content.v-kochen { background: #16201b; }
 .content.v-inventur { background: var(--mustard); }
-.rail { padding-top: calc(12px + var(--safe-area-inset-top, 0px)); padding-left: var(--safe-area-inset-left, 0px); box-sizing: content-box; }
+.rail { padding-left: var(--safe-area-inset-left, 0px); box-sizing: content-box; }
 .weekbar, .cookbar, .cooktabs { display: none; }
 .timer .which { display: block; font-size: 14px; font-weight: 600; }
 .recipe .state { font-size: 15px; font-weight: 700; color: var(--muted); }
@@ -340,7 +343,7 @@ button:active:not(:disabled) { transform: scale(0.98); }
   .hero .when { font-size: 15px; }
   .hero h1 { margin-top: 10px; font-size: 48px; line-height: 0.98; }
   .hero h1.long { font-size: 34px; line-height: 1.04; }
-  .hero .about { margin-top: 10px; font-size: 16px; }
+  .hero .about { margin-top: 10px; font-size: 16px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
   .hero .rice { margin-top: 10px; font-size: 15px; }
   .hero .spacer { min-height: 14px; }
   .primary { min-height: 58px; border-radius: 14px; font-size: 19px; }
@@ -380,7 +383,7 @@ button:active:not(:disabled) { transform: scale(0.98); }
   .expiring strong { flex: 1 0 100%; font-size: 19px; }
 
   .cook { flex-direction: column; }
-  .content.v-kochen { background: #212d27; }
+  .app.v-kochen, .content.v-kochen { background: #212d27; }
   .cookbar { display: flex; align-items: center; gap: 4px; padding: 4px 16px 4px 6px; background: #212d27; }
   .cookbar button { width: 44px; height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #f3f4f1; }
   .cookbar span { font-size: 20px; font-weight: 700; line-height: 1.1; overflow-wrap: break-word; min-width: 0; }
@@ -597,7 +600,7 @@ class KuechenplanPanel extends HTMLElement {
     );
 
     this._root.innerHTML = `
-      <div class="app ${this._view === "kochen" || this._view === "inventur" ? "focus" : ""}">
+      <div class="app v-${this._view} ${this._view === "kochen" || this._view === "inventur" ? "focus" : ""}">
         ${this._renderNav()}
         <div class="content v-${this._view}">${this._renderView()}</div>
       </div>
