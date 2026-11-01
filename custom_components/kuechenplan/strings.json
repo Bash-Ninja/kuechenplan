@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Küchenplan",
+        "description": "Stores become shopping lists. Recipes and the plan are added later through MCP or the panel.",
+        "data": {
+          "stores": "Stores, separated by commas",
+          "plan_weekdays": "Days you cook",
+          "fresh_weekday": "Fresh shopping day",
+          "audit_interval_days": "Count inventory every ... days"
+        }
+      }
+    },
+    "error": {
+      "no_stores": "Enter at least one store.",
+      "duplicate_store": "Two stores result in the same name.",
+      "no_weekdays": "Select at least one day."
+    },
+    "abort": {
+      "single_instance_allowed": "Already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Küchenplan",
+        "data": {
+          "stores": "Stores, separated by commas",
+          "plan_weekdays": "Days you cook",
+          "fresh_weekday": "Fresh shopping day",
+          "audit_interval_days": "Count inventory every ... days"
+        }
+      }
+    },
+    "error": {
+      "no_stores": "Enter at least one store.",
+      "duplicate_store": "Two stores result in the same name.",
+      "no_weekdays": "Select at least one day."
+    }
+  }
+}

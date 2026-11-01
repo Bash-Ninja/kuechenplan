@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Küchenplan",
+        "description": "Die Läden werden zu Einkaufslisten. Mengen, Rezepte und Plan kommen später über MCP oder die Tablet-Ansicht dazu.",
+        "data": {
+          "stores": "Läden, mit Komma getrennt",
+          "plan_weekdays": "Tage, an denen gekocht wird",
+          "fresh_weekday": "Tag für den Frischekauf",
+          "audit_interval_days": "Inventur alle ... Tage"
+        }
+      }
+    },
+    "error": {
+      "no_stores": "Bitte mindestens einen Laden angeben.",
+      "duplicate_store": "Zwei Läden ergeben denselben Namen.",
+      "no_weekdays": "Bitte mindestens einen Tag wählen."
+    },
+    "abort": {
+      "single_instance_allowed": "Küchenplan ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Küchenplan",
+        "data": {
+          "stores": "Läden, mit Komma getrennt",
+          "plan_weekdays": "Tage, an denen gekocht wird",
+          "fresh_weekday": "Tag für den Frischekauf",
+          "audit_interval_days": "Inventur alle ... Tage"
+        }
+      }
+    },
+    "error": {
+      "no_stores": "Bitte mindestens einen Laden angeben.",
+      "duplicate_store": "Zwei Läden ergeben denselben Namen.",
+      "no_weekdays": "Bitte mindestens einen Tag wählen."
+    }
+  }
+}

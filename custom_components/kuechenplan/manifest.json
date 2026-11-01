@@ -1,0 +1,21 @@
+{
+  "domain": "kuechenplan",
+  "name": "Küchenplan",
+  "codeowners": [
+    "@Bash-Ninja"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http",
+    "panel_custom",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/Bash-Ninja/kuechenplan",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/Bash-Ninja/kuechenplan/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}
