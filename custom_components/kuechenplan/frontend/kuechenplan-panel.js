@@ -280,7 +280,7 @@ ul { list-style: none; }
 .day.spontan { background: var(--mustard); color: var(--on-mustard); flex: 0 0 auto; }
 .day.spontan .sub, .day.spontan .swap { color: inherit; }
 .sheet { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 15, 12, 0.55); }
-.dialog { width: 100%; max-width: 460px; max-height: 100%; overflow-y: auto; padding: 24px; border-radius: 22px; background: var(--surface); display: flex; flex-direction: column; gap: 14px; }
+.dialog { overscroll-behavior: contain; width: 100%; max-width: 460px; max-height: 100%; overflow-y: auto; padding: 24px; border-radius: 22px; background: var(--surface); display: flex; flex-direction: column; gap: 14px; }
 .dialog h2 { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 15px; font-weight: 600; flex: 1; min-width: 0; }
 .field input, .field select { width: 100%; height: 52px; padding: 0 14px; border: 0; border-radius: 12px; background: var(--ground); font-size: 17px; font-weight: 400; }
@@ -410,7 +410,8 @@ button:active:not(:disabled) { transform: scale(0.98); }
   .card { margin-top: 12px; padding: 22px 20px; }
   .card h1 { font-size: 46px; }
 
-  .sheet { align-items: flex-end; padding: 0; }
+  .sheet { align-items: flex-end; padding: 0; overscroll-behavior: contain; }
+  .dialog::before { content: ""; align-self: center; flex-shrink: 0; width: 44px; height: 5px; margin: -8px 0 2px; border-radius: 3px; background: var(--muted); opacity: 0.45; }
   .dialog { max-width: none; max-height: 90%; border-radius: 22px 22px 0 0; padding: 22px 16px calc(16px + var(--safe-area-inset-bottom, 0px)); }
   .actions button { flex: 1 1 100%; }
   .toast { bottom: calc(76px + var(--safe-area-inset-bottom, 0px)); }
@@ -451,6 +452,10 @@ class KuechenplanPanel extends HTMLElement {
     this._recipe = null;
     this._recipeQuery = "";
     this.shadowRoot.addEventListener("click", (event) => this._onClick(event));
+    this.shadowRoot.addEventListener("touchstart", (event) => this._onTouchStart(event), { passive: true });
+    this.shadowRoot.addEventListener("touchmove", (event) => this._onTouchMove(event), { passive: false });
+    this.shadowRoot.addEventListener("touchend", (event) => this._onTouchEnd(event));
+    this.shadowRoot.addEventListener("touchcancel", () => this._onTouchEnd());
     this.shadowRoot.addEventListener("input", (event) => {
       if (event.target.name === "recipe-search") {
         this._recipeQuery = event.target.value;
@@ -467,10 +472,13 @@ class KuechenplanPanel extends HTMLElement {
       style.textContent = FONT_FACES;
       document.head.append(style);
     }
+    // Everything here updates live, pulling down must not reload the page.
+    document.documentElement.style.overscrollBehaviorY = "none";
     this._subscribe();
   }
 
   disconnectedCallback() {
+    document.documentElement.style.overscrollBehaviorY = "";
     this._unsubscribe?.then((off) => off()).catch(() => {});
     this._unsubscribe = null;
     clearInterval(this._timerTick);
@@ -1319,7 +1327,54 @@ class KuechenplanPanel extends HTMLElement {
 
   // --- Events ---
 
+  _onTouchStart(event) {
+    const dialog = event.target.closest(".dialog");
+    const scroller = dialog ?? event.target.closest(".content");
+    this._touch = {
+      startY: event.touches[0].clientY,
+      scroller,
+      dialog: dialog && dialog.scrollTop <= 0 ? dialog : null,
+      distance: 0,
+    };
+  }
+
+  _onTouchMove(event) {
+    const touch = this._touch;
+    if (!touch?.scroller) return;
+    const distance = event.touches[0].clientY - touch.startY;
+    if (distance <= 0 || touch.scroller.scrollTop > 0) return;
+    // At the top the gesture would reach Home Assistant's pull to refresh.
+    if (event.cancelable) event.preventDefault();
+    if (touch.dialog) {
+      touch.distance = distance;
+      touch.dialog.style.transition = "none";
+      touch.dialog.style.transform = `translateY(${distance}px)`;
+    }
+  }
+
+  _onTouchEnd() {
+    const touch = this._touch;
+    this._touch = null;
+    if (!touch?.dialog) return;
+    if (touch.distance > 90) {
+      this._closeSheets();
+    } else {
+      touch.dialog.style.transition = "transform 160ms ease-out";
+      touch.dialog.style.transform = "";
+    }
+  }
+
+  _closeSheets() {
+    this._recipe = null;
+    this._edit = null;
+    this._render();
+  }
+
   _onClick(event) {
+    if (event.target.classList?.contains("sheet")) {
+      this._closeSheets();
+      return;
+    }
     const target = event.target.closest("[data-action]");
     if (!target) return;
     const handler = this[`_on_${target.dataset.action.replace(/-/g, "_")}`];
