@@ -141,6 +141,8 @@ def _fire_events(hass: HomeAssistant, operation: str, args: dict[str, Any]) -> N
             EVENT_MEAL_COOKED,
             {"date": args["date"], "status": args.get("status", STATUS_COOKED)},
         )
+    elif operation == "mark_adhoc_cooked":
+        hass.bus.async_fire(EVENT_MEAL_COOKED, {"status": STATUS_COOKED})
 
 
 def _get_plan(store: KuechenplanStore, args: dict[str, Any]) -> JsonObjectType:
@@ -197,6 +199,10 @@ def _get_inventory(store: KuechenplanStore, _: dict[str, Any]) -> JsonObjectType
     }
 
 
+def _what_can_i_cook(store: KuechenplanStore, args: dict[str, Any]) -> JsonObjectType:
+    return store.what_can_i_cook(args.get("max_missing", 3), args.get("servings"))
+
+
 def _apply_week_plan(store: KuechenplanStore, args: dict[str, Any]) -> JsonObjectType:
     return store.async_apply_plan(args["days"], args.get("replace", True))
 
@@ -222,6 +228,36 @@ def _mark_cooked(store: KuechenplanStore, args: dict[str, Any]) -> JsonObjectTyp
         args.get("rating"),
         args.get("comment"),
         args.get("servings"),
+    )
+
+
+def _add_adhoc(store: KuechenplanStore, args: dict[str, Any]) -> JsonObjectType:
+    meal = store.async_add_adhoc(
+        args.get("recipe_id"),
+        args.get("recipe"),
+        args.get("servings"),
+        args.get("shop", True),
+    )
+    return {
+        "id": meal["id"],
+        "title": meal["title"],
+        "servings": meal["servings"],
+        "shopping": [
+            store.shopping_view(item)
+            for item in store.shopping
+            if meal["title"] in item["for"] and not item["done"]
+        ],
+    }
+
+
+def _remove_adhoc(store: KuechenplanStore, args: dict[str, Any]) -> JsonObjectType:
+    store.async_remove_adhoc(args["id"])
+    return {"success": True}
+
+
+def _cook_adhoc(store: KuechenplanStore, args: dict[str, Any]) -> JsonObjectType:
+    return store.async_cook_adhoc(
+        args["id"], args.get("rating"), args.get("comment"), args.get("servings")
     )
 
 
@@ -325,6 +361,23 @@ OPERATIONS: dict[str, Operation] = {
             read_only=True,
         ),
         Operation(
+            "what_can_i_cook",
+            "Answer 'what can I cook with what is at home?'. Ranks stored recipes, what "
+            "expires soon first, and returns the inventory. If nothing fits well, suggest "
+            "new dishes from the inventory and offer to save one with add_adhoc_meal. If "
+            "the inventory is empty or the last count is old, say so and suggest a count.",
+            p.Schema(
+                {
+                    p.Optional(
+                        "max_missing", description="Allowed missing ingredients, default 3"
+                    ): p.All(int, p.Range(min=0, max=20)),
+                    p.Optional("servings"): p.All(int, p.Range(min=1, max=50)),
+                }
+            ),
+            _what_can_i_cook,
+            read_only=True,
+        ),
+        Operation(
             "apply_week_plan",
             "Write the plan for one or more days. Calendar, shopping lists, sensors "
             "and the kitchen display follow from this; never write those directly. "
@@ -380,6 +433,46 @@ OPERATIONS: dict[str, Operation] = {
                 }
             ),
             _mark_cooked,
+        ),
+        Operation(
+            "add_adhoc_meal",
+            "Cook something spontaneously, without touching the week plan. Takes a "
+            "stored recipe or a new one. What is missing lands on the shopping lists "
+            "right away and the kitchen display offers to cook it. With shop false "
+            "nothing is added to the lists, for when everything is at home.",
+            p.Schema(
+                {
+                    p.Optional("recipe_id", description="A stored recipe"): str,
+                    p.Optional("recipe", description="A new or changed recipe"): RECIPE,
+                    p.Optional("servings"): p.All(int, p.Range(min=1, max=50)),
+                    p.Optional("shop"): bool,
+                }
+            ),
+            _add_adhoc,
+        ),
+        Operation(
+            "remove_adhoc_meal",
+            "Drop a spontaneous meal and what it still needed on the lists.",
+            p.Schema({p.Required("id"): str}),
+            _remove_adhoc,
+        ),
+        Operation(
+            "mark_adhoc_cooked",
+            "Record a spontaneous meal as cooked, with an optional rating. Takes the "
+            "ingredients out of the inventory.",
+            p.Schema(
+                {
+                    p.Required("id"): str,
+                    p.Optional(
+                        "rating", description="3 = again, 2 = fine, 1 = never again"
+                    ): p.All(int, p.Range(min=1, max=3)),
+                    p.Optional("comment"): str,
+                    p.Optional("servings", description="Servings actually cooked"): p.All(
+                        int, p.Range(min=1, max=50)
+                    ),
+                }
+            ),
+            _cook_adhoc,
         ),
         Operation(
             "upsert_recipe",

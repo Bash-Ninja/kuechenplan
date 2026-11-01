@@ -27,11 +27,18 @@ const daysUntil = (iso, today) =>
 
 const fmtNumber = (value) =>
   (Math.round(value * 100) / 100).toString().replace(".", ",");
+const FRACTIONS = { 25: "¼", 33: "⅓", 50: "½", 67: "⅔", 75: "¾" };
+const fmtKitchen = (value) => {
+  const whole = Math.floor(value + 0.005);
+  const rest = FRACTIONS[Math.round((value - whole) * 100)];
+  return rest ? `${whole || ""}${rest}` : fmtNumber(value);
+};
 const fmtAmount = (amount, unit) => {
   if (amount === null || amount === undefined) return unit || "";
   if (unit === "g" && amount >= 1000) return `${fmtNumber(amount / 1000)} kg`;
   if (unit === "ml" && amount >= 1000) return `${fmtNumber(amount / 1000)} l`;
-  return unit ? `${fmtNumber(amount)} ${unit}` : fmtNumber(amount);
+  if (unit === "g" || unit === "ml") return `${fmtNumber(amount)} ${unit}`;
+  return unit ? `${fmtKitchen(amount)} ${unit}` : fmtKitchen(amount);
 };
 const stepSize = (amount, unit) => {
   if (unit === "g" || unit === "ml") return amount > 200 ? 50 : 10;
@@ -58,6 +65,8 @@ const ICONS = {
   clock: '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>',
   swap: '<path d="M7 4v14M7 18l-3-3M7 18l3-3M17 20V6M17 6l-3 3M17 6l3 3"></path>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"></path>',
+  close: '<path d="M6 6l12 12M18 6L6 18"></path>',
+  rezepte: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M5 17a3 3 0 0 1 3-3h11M9 8h6"></path>',
 };
 
 const STYLE = `
@@ -84,7 +93,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 h1, h2, p, ul { margin: 0; padding: 0; }
 ul { list-style: none; }
 .display { font-family: "Bricolage Grotesque", sans-serif; letter-spacing: -0.02em; }
-.app { display: flex; height: 100dvh; }
+.app { display: flex; height: 100%; }
 .rail {
   width: 96px; flex-shrink: 0; padding: 12px 0; display: flex; flex-direction: column;
   align-items: center; gap: 8px; background: var(--rail); color: var(--on-rail); overflow-y: auto;
@@ -255,6 +264,21 @@ ul { list-style: none; }
 .card form button { width: 56px; height: 56px; flex-shrink: 0; border-radius: 14px; background: #e7e9e4; color: #16201b; font-size: 24px; }
 .card .finish { margin-top: 12px; min-height: 72px; border-radius: 18px; background: #16201b; color: #f3f4f1; font-size: 20px; font-weight: 700; }
 
+.recipes { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.recipe { min-height: 104px; padding: 18px 20px; border-radius: 18px; background: var(--surface); display: flex; flex-direction: column; justify-content: center; gap: 4px; text-align: left; }
+.recipe .name { font-size: 25px; font-weight: 700; letter-spacing: -0.01em; overflow-wrap: break-word; }
+.recipe .meta { font-size: 15px; color: var(--muted); }
+.search { width: 100%; height: 56px; padding: 0 18px; border: 0; border-radius: 14px; background: var(--surface); font-size: 17px; }
+.need { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 17px; }
+.need .state { flex-shrink: 0; font-size: 14px; font-weight: 700; color: var(--muted); }
+.need .state.home { color: var(--basil); }
+.dialog .stepper { background: var(--line); }
+.dialog .stepper button { background: var(--surface); color: var(--ink); }
+.dialog .note { font-size: 16px; line-height: 1.35; color: var(--muted); }
+.adhocbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.adhocbar button { min-height: 48px; padding: 0 18px; border-radius: 12px; background: var(--mustard); color: var(--on-mustard); font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.day.spontan { background: var(--mustard); color: var(--on-mustard); flex: 0 0 auto; }
+.day.spontan .sub, .day.spontan .swap { color: inherit; }
 .sheet { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 15, 12, 0.55); }
 .dialog { width: 100%; max-width: 460px; max-height: 100%; overflow-y: auto; padding: 24px; border-radius: 22px; background: var(--surface); display: flex; flex-direction: column; gap: 14px; }
 .dialog h2 { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
@@ -266,7 +290,7 @@ ul { list-style: none; }
 .actions .main { background: #16201b; color: #f3f4f1; }
 .actions .danger { color: var(--tomato-text); }
 .toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 20; max-width: calc(100% - 32px); padding: 14px 20px; border-radius: 14px; background: var(--tomato); color: #fff; font-size: 16px; font-weight: 600; }
-.loading { display: flex; align-items: center; justify-content: center; height: 100dvh; font-size: 18px; color: var(--muted); }
+.loading { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 18px; color: var(--muted); }
 
 @media (max-width: 900px) {
   .week { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; padding: 16px; }
@@ -280,13 +304,113 @@ ul { list-style: none; }
 }
 @media (max-width: 640px) {
   .app { flex-direction: column-reverse; }
-  .rail { width: 100%; flex-direction: row; justify-content: space-around; padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); gap: 2px; overflow: visible; }
-  .rail button, .rail button.menu { flex: 1 1 0; width: auto; min-width: 0; height: 60px; font-size: 11px; gap: 3px; padding: 0; }
-  .rail button.menu { flex: 0 0 48px; }
-  .day .open { padding-left: 16px; gap: 12px; }
-  .day .short { width: 44px; font-size: 26px; }
-  .day .title { font-size: 21px; }
-  .toast { bottom: 84px; }
+  .rail { width: 100%; flex-direction: row; justify-content: space-around; overflow: visible; flex-shrink: 0; }
+  .rail button, .rail button.menu { width: auto; min-width: 0; padding: 0; }
+}
+
+#root { height: 100%; }
+button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; transition: transform 90ms ease-out; }
+button:active:not(:disabled) { transform: scale(0.98); }
+.content { display: flex; flex-direction: column; padding-top: var(--safe-area-inset-top, 0px); padding-right: var(--safe-area-inset-right, 0px); overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.content > * { flex: 1 0 auto; }
+.content.v-kochen { background: #16201b; }
+.content.v-inventur { background: var(--mustard); }
+.rail { padding-top: calc(12px + var(--safe-area-inset-top, 0px)); padding-left: var(--safe-area-inset-left, 0px); box-sizing: content-box; }
+.weekbar, .cookbar, .cooktabs { display: none; }
+.timer .which { display: block; font-size: 14px; font-weight: 600; }
+.recipe .state { font-size: 15px; font-weight: 700; color: var(--muted); }
+.recipe .state.ready { color: var(--basil); }
+.recipe .state.soon { color: var(--tomato-text); }
+.section-title { margin-top: 4px; font-size: 14px; font-weight: 700; color: var(--muted); }
+.need .state.maybe { color: var(--tomato-text); }
+
+@media (max-width: 640px) {
+  .app.focus .rail { display: none; }
+  .content.v-kochen, .content.v-inventur { padding-bottom: var(--safe-area-inset-bottom, 0px); }
+  .rail { box-sizing: border-box; padding: 6px 6px calc(6px + var(--safe-area-inset-bottom, 0px)); gap: 2px; }
+  .rail button.menu { display: none; }
+  .rail button { flex: 1 1 0; height: 54px; border-radius: 12px; font-size: 11px; gap: 3px; }
+  .rail button svg { width: 23px; height: 23px; }
+
+  .weekbar { display: flex; align-items: center; gap: 4px; min-height: 44px; margin: -4px 0 -4px -10px; grid-column: 1 / -1; }
+  .weekbar button { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
+  .weekbar span { font-size: 24px; font-weight: 800; }
+  .week { display: flex; flex-direction: column; gap: 10px; padding: 8px 16px 16px; }
+  .hero { flex: none; min-height: 0; padding: 20px; border-radius: 20px; }
+  .hero .when { font-size: 15px; }
+  .hero h1 { margin-top: 10px; font-size: 48px; line-height: 0.98; }
+  .hero h1.long { font-size: 34px; line-height: 1.04; }
+  .hero .about { margin-top: 10px; font-size: 16px; }
+  .hero .rice { margin-top: 10px; font-size: 15px; }
+  .hero .spacer { min-height: 14px; }
+  .primary { min-height: 58px; border-radius: 14px; font-size: 19px; }
+  .days { gap: 8px; }
+  .day { flex: none; min-height: 68px; border-radius: 16px; }
+  .day .open { padding: 8px 4px 8px 16px; gap: 10px; }
+  .day .short { width: 40px; font-size: 23px; }
+  .day .title { font-size: 19px; line-height: 1.15; }
+  .day .sub { font-size: 14px; margin-top: 2px; }
+  .day .swap { width: 48px; }
+  .chip { padding: 4px 9px; font-size: 12px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .tile { min-height: 92px; padding: 14px 16px; border-radius: 16px; }
+  .tile.dark { grid-column: 1 / -1; min-height: 76px; }
+  .tile .label { font-size: 13px; }
+  .tile .big { font-size: 21px; line-height: 1.1; }
+  .tile .small { font-size: 13px; }
+  .banner { padding: 12px 16px; font-size: 16px; flex-wrap: wrap; }
+
+  .page { padding: 12px 16px 16px; gap: 12px; }
+  .page h1 { font-size: 34px; }
+  .page header p { font-size: 15px; margin-top: 4px; }
+  .page header.row { gap: 10px; }
+  .page header.row > div { flex: 1 0 100%; }
+  .cta, .ghost { flex: 1 1 0; min-height: 54px; padding: 0 12px; font-size: 16px; border-radius: 14px; }
+  .tabs { max-width: none; }
+  .groups { columns: auto; }
+  .list { border-radius: 14px; }
+  .adder { margin: 0 -16px -16px; padding: 10px 16px; border-radius: 0; }
+  .recipes { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .recipe { min-height: 76px; padding: 14px 16px; border-radius: 16px; }
+  .recipe .name { font-size: 21px; }
+  .place { padding: 14px 16px; border-radius: 16px; }
+  .place h2 { font-size: 22px; }
+  .stock { font-size: 17px; }
+  .expiring { padding: 12px 16px; font-size: 16px; border-radius: 16px; }
+  .expiring strong { flex: 1 0 100%; font-size: 19px; }
+
+  .cook { flex-direction: column; }
+  .content.v-kochen { background: #212d27; }
+  .cookbar { display: flex; align-items: center; gap: 4px; padding: 4px 16px 4px 6px; background: #212d27; }
+  .cookbar button { width: 44px; height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #f3f4f1; }
+  .cookbar span { font-size: 20px; font-weight: 700; line-height: 1.1; overflow-wrap: break-word; min-width: 0; }
+  .cooktabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 0 16px 10px; background: #212d27; }
+  .cooktabs button { min-height: 44px; border-radius: 10px; color: #c9d0cb; font-size: 16px; font-weight: 700; }
+  .cooktabs button[aria-pressed="true"] { background: #33423a; color: #f3f4f1; }
+  .cook aside { width: 100%; padding: 12px 16px 20px; flex: 1 0 auto; }
+  .cook aside .back, .cook aside h1 { display: none; }
+  .cook[data-tab="steps"] aside { display: none; }
+  .cook[data-tab="zutaten"] main { display: none; }
+  .cook main { padding: 8px 16px 16px; min-height: 0; flex: 1 0 auto; }
+  .progress { font-size: 15px; min-height: 32px; }
+  .dots span { width: 18px; height: 6px; }
+  .step { font-size: 32px; line-height: 1.16; padding: 16px 0; }
+  .timer { margin-bottom: 10px; padding: 8px 8px 8px 18px; border-radius: 14px; }
+  .timer .time { font-size: 30px; }
+  .timer button { min-height: 52px; padding: 0 18px; font-size: 17px; }
+  .pair { gap: 10px; }
+  .pair button { min-height: 68px; font-size: 19px; border-radius: 16px; }
+  .rate h2 { font-size: 42px; }
+  .rate button { min-height: 68px; font-size: 19px; }
+
+  .audit { padding: 8px 16px 12px; }
+  .card { margin-top: 12px; padding: 22px 20px; }
+  .card h1 { font-size: 46px; }
+
+  .sheet { align-items: flex-end; padding: 0; }
+  .dialog { max-width: none; max-height: 90%; border-radius: 22px 22px 0 0; padding: 22px 16px calc(16px + var(--safe-area-inset-bottom, 0px)); }
+  .actions button { flex: 1 1 100%; }
+  .toast { bottom: calc(76px + var(--safe-area-inset-bottom, 0px)); }
 }
 `;
 
@@ -302,7 +426,7 @@ class KuechenplanPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLE}</style><div id="root"><div class="loading">Küchenplan lädt…</div></div>`;
     this._root = this.shadowRoot.getElementById("root");
     const params = new URLSearchParams(window.location.search);
-    this._view = ["woche", "kochen", "einkauf", "kuehlschrank"].includes(params.get("view"))
+    this._view = ["woche", "kochen", "rezepte", "einkauf", "kuehlschrank"].includes(params.get("view"))
       ? params.get("view")
       : "woche";
     this._store = params.get("store");
@@ -311,7 +435,15 @@ class KuechenplanPanel extends HTMLElement {
     this._cook = null;
     this._audit = null;
     this._edit = null;
+    this._recipe = null;
+    this._recipeQuery = "";
     this.shadowRoot.addEventListener("click", (event) => this._onClick(event));
+    this.shadowRoot.addEventListener("input", (event) => {
+      if (event.target.name === "recipe-search") {
+        this._recipeQuery = event.target.value;
+        this._render();
+      }
+    });
     this.shadowRoot.addEventListener("submit", (event) => this._onSubmit(event));
   }
 
@@ -389,11 +521,12 @@ class KuechenplanPanel extends HTMLElement {
     );
 
     this._root.innerHTML = `
-      <div class="app">
+      <div class="app ${this._view === "kochen" || this._view === "inventur" ? "focus" : ""}">
         ${this._renderNav()}
-        <div class="content">${this._renderView()}</div>
+        <div class="content v-${this._view}">${this._renderView()}</div>
       </div>
       ${this._edit ? this._renderEdit() : ""}
+      ${this._recipe ? this._renderRecipeSheet() : ""}
       ${this._toastText ? `<div class="toast" role="alert">${esc(this._toastText)}</div>` : ""}`;
 
     // A live update must not eat what someone is typing.
@@ -409,6 +542,7 @@ class KuechenplanPanel extends HTMLElement {
     const entries = [
       ["woche", "Woche"],
       ["kochen", "Kochen"],
+      ["rezepte", "Rezepte"],
       ["einkauf", "Einkauf"],
       ["kuehlschrank", "Kühlschrank"],
     ];
@@ -428,6 +562,8 @@ class KuechenplanPanel extends HTMLElement {
     switch (this._view) {
       case "kochen":
         return this._renderCook();
+      case "rezepte":
+        return this._renderRecipes();
       case "einkauf":
         return this._renderShopping();
       case "kuehlschrank":
@@ -465,9 +601,11 @@ class KuechenplanPanel extends HTMLElement {
     const swapping = this._swapFrom;
     const swapHero = hero && !swapping;
     return `<div class="week">
+      <div class="weekbar"><button type="button" data-action="menu" aria-label="Home-Assistant-Menü">${icon(ICONS.menu)}</button><span class="display">Küchenplan</span></div>
       ${swapping ? `<div class="banner" role="status"><span>${esc(dayLong(swapping))}: Mit welchem Tag tauschen?</span><button type="button" data-action="swap-cancel">Abbrechen</button></div>` : ""}
       ${this._renderHero(hero)}
       <section class="days" aria-label="Weitere Tage">
+        ${this._data.adhoc.map((meal) => this._renderAdhocRow(meal)).join("")}
         ${swapHero || !hero ? "" : this._renderDayRow(hero.date, hero)}
         ${rows.map(({ iso, day }) => this._renderDayRow(iso, day)).join("")}
       </section>
@@ -548,6 +686,19 @@ class KuechenplanPanel extends HTMLElement {
     </div>`;
   }
 
+  _renderAdhocRow(meal) {
+    return `<div class="day spontan">
+      <button type="button" class="open" data-action="cook-adhoc" data-value="${esc(meal.id)}">
+        <span class="text">
+          <span class="title display">${esc(meal.title)}</span>
+          <span class="sub">Spontan · ${esc(meal.minutes)} Min. · ${esc(meal.servings)} Portionen</span>
+        </span>
+        ${icon(ICONS.arrow, 24)}
+      </button>
+      <button type="button" class="swap" data-action="adhoc-remove" data-value="${esc(meal.id)}" aria-label="${esc(meal.title)} streichen">${icon(ICONS.close, 24)}</button>
+    </div>`;
+  }
+
   _renderTiles() {
     const { shopping, stores, expiring, audit, inventory, plan_missing: missing, next_plan_day: next, today } = this._data;
     const open = shopping.filter((item) => !item.done);
@@ -588,14 +739,31 @@ class KuechenplanPanel extends HTMLElement {
   // --- Cooking ---
 
   _renderCook() {
-    const date = this._cook?.date ?? this._heroDay()?.date;
-    const day = this._data.days.find((item) => item.date === date);
+    const { adhoc, days, today } = this._data;
+    if (this._cook?.adhocId && !adhoc.some((meal) => meal.id === this._cook.adhocId)) {
+      this._cook = null;
+    }
+    let day;
+    if (this._cook) {
+      day = this._cook.adhocId
+        ? adhoc.find((meal) => meal.id === this._cook.adhocId)
+        : days.find((item) => item.date === this._cook.date);
+    } else {
+      const next = this._heroDay();
+      day = next?.date === today && next.recipe ? next : adhoc[0] ?? next;
+    }
     if (!day?.recipe) {
       return `<div class="page"><h1 class="display">Kochen</h1>
         <p class="empty">Gerade ist kein Rezept geplant. Sobald ein Plan da ist, geht es hier los.</p></div>`;
     }
     if (!this._cook) {
-      this._cook = { date: day.date, step: 0, servings: day.servings || day.recipe.servings, rating: false };
+      this._cook = {
+        date: day.date ?? null,
+        adhocId: day.date ? null : day.id,
+        step: 0,
+        servings: day.servings || day.recipe.servings,
+        rating: false,
+      };
     }
     const { recipe } = day;
     const cook = this._cook;
@@ -605,7 +773,20 @@ class KuechenplanPanel extends HTMLElement {
         (item) => `<li><span class="amount">${esc(fmtAmount(item.amount === null ? null : item.amount * factor, item.unit))}</span><span>${esc(item.name)}</span></li>`,
       )
       .join("");
-    return `<div class="cook">
+    const tab = cook.rating ? "steps" : cook.tab || "steps";
+    return `<div class="cook" data-tab="${tab}">
+      <div class="cookbar">
+        <button type="button" data-action="view" data-value="woche" aria-label="Zur Woche">${icon(ICONS.back, 24)}</button>
+        <span class="display">${esc(recipe.name)}</span>
+      </div>
+      ${
+        cook.rating
+          ? ""
+          : `<div class="cooktabs" role="group" aria-label="Ansicht">
+              <button type="button" data-action="cook-tab" data-value="steps" aria-pressed="${tab === "steps"}">Schritte</button>
+              <button type="button" data-action="cook-tab" data-value="zutaten" aria-pressed="${tab === "zutaten"}">Zutaten</button>
+            </div>`
+      }
       <aside>
         <button type="button" class="back" data-action="view" data-value="woche">${icon(ICONS.back, 22)}Zur Woche</button>
         <h1 class="display">${esc(recipe.name)}</h1>
@@ -628,12 +809,14 @@ class KuechenplanPanel extends HTMLElement {
     const last = index === steps.length - 1;
     const dots = steps.map((_, dot) => `<span class="${dot <= index ? "on" : ""}"></span>`).join("");
     let timer = "";
-    if (this._timer?.step === index) {
-      const left = Math.max(0, Math.ceil((this._timer.endsAt - Date.now()) / 1000));
-      const label = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
-      timer = `<div class="timer ${left === 0 ? "ringing" : ""}" role="timer">
-        <span class="time">${left === 0 ? "Zeit ist um" : label}</span>
-        <button type="button" data-action="timer-stop">${left === 0 ? "Okay" : "Stopp"}</button></div>`;
+    if (this._timer) {
+      // A running timer stays visible on every step, it is what you are waiting for.
+      const label = this._timerLabel();
+      const ringing = label === null;
+      const other = this._timer.step === index ? "" : `<span class="which">Timer aus Schritt ${this._timer.step + 1}</span>`;
+      timer = `<div class="timer ${ringing ? "ringing" : ""}" role="timer">
+        <span>${other}<span class="time">${ringing ? "Zeit ist um" : label}</span></span>
+        <button type="button" data-action="timer-stop">${ringing ? "Okay" : "Stopp"}</button></div>`;
     } else if (step.minutes) {
       timer = `<div class="timer"><span class="time">${step.minutes}:00</span>
         <button type="button" data-action="timer-start" data-value="${step.minutes}">Timer starten</button></div>`;
@@ -661,16 +844,27 @@ class KuechenplanPanel extends HTMLElement {
   _startTimer(minutes) {
     this._stopTimer();
     this._timer = { step: this._cook.step, endsAt: Date.now() + minutes * 60000, rung: false };
+    // Only the digits change: redrawing the page every second would swallow taps.
     this._timerTick = setInterval(() => {
       const timer = this._timer;
       if (!timer) return;
       if (!timer.rung && Date.now() >= timer.endsAt) {
         timer.rung = true;
         this._ring();
+        if (this._view === "kochen") this._render();
+        return;
       }
-      if (this._view === "kochen") this._render();
+      const label = this._timerLabel();
+      const time = this._root.querySelector(".timer .time");
+      if (time && label) time.textContent = label;
     }, 1000);
     this._render();
+  }
+
+  _timerLabel() {
+    const left = Math.ceil((this._timer.endsAt - Date.now()) / 1000);
+    if (left <= 0) return null;
+    return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
   }
 
   _stopTimer() {
@@ -743,6 +937,15 @@ class KuechenplanPanel extends HTMLElement {
     return `<div class="page">
       <h1 class="display">Einkauf</h1>
       <div class="tabs" role="group" aria-label="Laden">${tabs}</div>
+      ${
+        this._data.adhoc.length
+          ? `<div class="adhocbar">${this._data.adhoc
+              .map(
+                (meal) => `<button type="button" data-action="cook-adhoc" data-value="${esc(meal.id)}">${esc(meal.title)} kochen${icon(ICONS.arrow, 20)}</button>`,
+              )
+              .join("")}</div>`
+          : ""
+      }
       ${list}
       <form class="adder" data-form="add-shopping">
         <label class="sr" for="neu">Artikel hinzufügen</label>
@@ -766,6 +969,124 @@ class KuechenplanPanel extends HTMLElement {
       <span class="body"><span class="name">${esc(item.name)}</span>${detail ? `<span class="detail">${esc(detail)}</span>` : ""}</span>
       ${item.offer ? `<span class="chip">${esc(item.offer)}</span>` : ""}
     </button></li>`;
+  }
+
+  // --- Recipes ---
+
+  _renderRecipes() {
+    const { recipes, today } = this._data;
+    const query = this._recipeQuery.trim().toLocaleLowerCase("de");
+    const hits = recipes.filter(
+      (recipe) =>
+        !query ||
+        recipe.name.toLocaleLowerCase("de").includes(query) ||
+        recipe.ingredients.some((item) => item.name.toLocaleLowerCase("de").includes(query)),
+    );
+    const meta = (recipe) =>
+      [
+        `${recipe.minutes} Min.`,
+        recipe.last_cooked
+          ? `zuletzt vor ${Math.max(0, -daysUntil(recipe.last_cooked, today))} Tagen`
+          : "noch nie gekocht",
+      ].join(" · ");
+    const hasStock = this._data.inventory.length > 0;
+    const card = (recipe) => {
+      let state = "";
+      if (hasStock) {
+        if (recipe.uses_expiring.length) {
+          state = `<span class="state soon">Verbraucht ${esc(recipe.uses_expiring.join(", "))}</span>`;
+        }
+        state += recipe.missing.length
+          ? `<span class="state">Fehlt: ${esc(recipe.missing.join(", "))}</span>`
+          : '<span class="state ready">Alles da</span>';
+      }
+      return `<button type="button" class="recipe" data-action="recipe-open" data-value="${esc(recipe.id)}">
+        <span class="name display">${esc(recipe.name)}</span>
+        <span class="meta">${esc(meta(recipe))}</span>${state}</button>`;
+    };
+    const rank = (first, second) =>
+      first.missing.length - second.missing.length ||
+      second.uses_expiring.length - first.uses_expiring.length ||
+      first.name.localeCompare(second.name, "de");
+    const grid = (items) => `<div class="recipes">${items.map(card).join("")}</div>`;
+    const onlyNow = this._recipeFilter === "now";
+    const ready = hits.filter((recipe) => !recipe.missing.length);
+    const close = hits.filter((recipe) => recipe.missing.length && recipe.missing.length <= 2);
+    let list;
+    if (onlyNow && !hasStock) {
+      list = `<p class="empty">Noch ist nichts im Vorrat erfasst. Mach eine Inventur oder schick Claude ein Foto vom Kühlschrank, dann steht hier, was ihr daraus kochen könnt.</p>
+        <button type="button" class="cta" data-action="audit-start">Inventur starten</button>`;
+    } else if (onlyNow) {
+      list =
+        ready.length || close.length
+          ? `${ready.length ? `<h2 class="section-title">Geht sofort</h2>${grid(ready.sort(rank))}` : ""}
+             ${close.length ? `<h2 class="section-title">Fehlt nur wenig</h2>${grid(close.sort(rank))}` : ""}`
+          : '<p class="empty">Dazu passt gerade kein Rezept. Frag Claude: „Was kann ich aus dem kochen, was da ist?“ Dann kommen auch neue Ideen.</p>';
+    } else if (hits.length) {
+      list = grid(hasStock ? hits.sort(rank) : hits);
+    } else {
+      list = `<p class="empty">${recipes.length ? "Dazu gibt es kein Rezept." : "Noch keine Rezepte. Sag Claude zum Beispiel: „Speicher unser Rezept für Flammkuchen.“"}</p>`;
+    }
+    return `<div class="page">
+      <h1 class="display">Worauf habt ihr Lust?</h1>
+      <div class="tabs" role="group" aria-label="Auswahl">
+        <button type="button" data-action="recipe-filter" data-value="now" aria-pressed="${onlyNow}">Was geht jetzt?</button>
+        <button type="button" data-action="recipe-filter" data-value="all" aria-pressed="${!onlyNow}">Alle · ${recipes.length}</button>
+      </div>
+      <label class="sr" for="suche">Rezept suchen</label>
+      <input class="search" id="suche" name="recipe-search" placeholder="Rezept oder Zutat suchen…" autocomplete="off">
+      ${list}
+    </div>`;
+  }
+
+  _renderRecipeSheet() {
+    const recipe = this._data.recipes.find((item) => item.id === this._recipe.id);
+    if (!recipe) return "";
+    const { servings } = this._recipe;
+    const factor = servings / recipe.servings;
+    let missing = 0;
+    const rows = recipe.ingredients.map((item, index) => {
+      const amount = item.amount === null ? null : item.amount * factor;
+      const stock = recipe.stock[index];
+      let state = "Einkaufen";
+      let style = "";
+      if (item.staple) {
+        state = "Vorrat";
+        style = "home";
+      } else if (stock.optional) {
+        state = "Optional";
+      } else if (stock.present && (amount === null || stock.have >= amount - 0.001)) {
+        state = "Ist da";
+        style = "home";
+      } else if (stock.maybe) {
+        state = "Vielleicht da";
+        style = "maybe";
+      } else {
+        missing += 1;
+        if (stock.have > 0) state = `${fmtAmount(stock.have, item.unit)} da`;
+      }
+      return `<li class="need"><span>${esc(fmtAmount(amount, item.unit))} ${esc(item.name)}</span>
+        <span class="state ${style}">${esc(state)}</span></li>`;
+    });
+    const buttons = missing
+      ? `<button type="button" class="main" data-action="recipe-shop">Einkaufen und kochen</button>
+         <button type="button" data-action="recipe-cook">Alles da, jetzt kochen</button>`
+      : `<button type="button" class="main" data-action="recipe-cook">Jetzt kochen</button>`;
+    return `<div class="sheet"><div class="dialog" role="dialog" aria-modal="true" aria-label="${esc(recipe.name)}">
+      <h2 class="display">${esc(recipe.name)}</h2>
+      ${recipe.summary ? `<p class="note">${esc(recipe.summary)}</p>` : ""}
+      <div class="stepper"><span>${servings} ${servings === 1 ? "Portion" : "Portionen"}</span>
+        <div>
+          <button type="button" data-action="recipe-servings" data-value="-1" aria-label="Weniger Portionen">−</button>
+          <button type="button" data-action="recipe-servings" data-value="1" aria-label="Mehr Portionen">+</button>
+        </div>
+      </div>
+      <ul>${rows.join("")}</ul>
+      <div class="actions">
+        ${buttons}
+        <button type="button" data-action="recipe-close">Schließen</button>
+      </div>
+    </div></div>`;
   }
 
   // --- Inventory ---
@@ -797,6 +1118,7 @@ class KuechenplanPanel extends HTMLElement {
     return `<div class="page">
       <header class="row">
         <div><h1 class="display">Was noch da ist</h1><p>${esc(auditText)}</p></div>
+        <button type="button" class="ghost" data-action="recipes-now">Was kann ich kochen?</button>
         <button type="button" class="ghost" data-action="edit-new">Hinzufügen</button>
         <button type="button" class="cta" data-action="audit-start">Inventur starten</button>
       </header>
@@ -918,6 +1240,74 @@ class KuechenplanPanel extends HTMLElement {
     this._on_view("kochen");
   }
 
+  _on_cook_adhoc(id) {
+    const meal = this._data.adhoc.find((item) => item.id === id);
+    if (!meal) return;
+    this._cook = { date: null, adhocId: id, step: 0, servings: meal.servings, rating: false };
+    this._stopTimer();
+    this._on_view("kochen");
+  }
+
+  _on_adhoc_remove(id) {
+    this._call("remove_adhoc_meal", { id });
+  }
+
+  _on_cook_tab(tab) {
+    this._cook.tab = tab;
+    this._render();
+  }
+
+  _on_recipe_filter(filter) {
+    this._recipeFilter = filter;
+    this._render();
+  }
+
+  _on_recipes_now() {
+    this._recipeFilter = "now";
+    this._on_view("rezepte");
+  }
+
+  _on_recipe_open(id) {
+    const recipe = this._data.recipes.find((item) => item.id === id);
+    if (recipe) {
+      this._recipe = { id, servings: recipe.servings };
+      this._render();
+    }
+  }
+
+  _on_recipe_close() {
+    this._recipe = null;
+    this._render();
+  }
+
+  _on_recipe_servings(delta) {
+    this._recipe.servings = Math.max(1, this._recipe.servings + Number(delta));
+    this._render();
+  }
+
+  async _on_recipe_shop() {
+    const { id, servings } = this._recipe;
+    this._recipe = null;
+    if (await this._call("add_adhoc_meal", { recipe_id: id, servings })) {
+      this._on_view("einkauf");
+    } else {
+      this._render();
+    }
+  }
+
+  async _on_recipe_cook() {
+    const { id, servings } = this._recipe;
+    this._recipe = null;
+    const meal = await this._call("add_adhoc_meal", { recipe_id: id, servings, shop: false });
+    if (meal) {
+      this._cook = { date: null, adhocId: meal.id, step: 0, servings, rating: false };
+      this._stopTimer();
+      this._on_view("kochen");
+    } else {
+      this._render();
+    }
+  }
+
   _on_servings(delta) {
     this._cook.servings = Math.max(1, this._cook.servings + Number(delta));
     this._render();
@@ -935,9 +1325,10 @@ class KuechenplanPanel extends HTMLElement {
   }
 
   async _on_rate(rating) {
-    const args = { date: this._cook.date, servings: this._cook.servings };
+    const { adhocId, date, servings } = this._cook;
+    const args = adhocId ? { id: adhocId, servings } : { date, servings };
     if (Number(rating)) args.rating = Number(rating);
-    if (await this._call("mark_cooked", args)) {
+    if (await this._call(adhocId ? "mark_adhoc_cooked" : "mark_cooked", args)) {
       this._cook = null;
       this._on_view("woche");
     }

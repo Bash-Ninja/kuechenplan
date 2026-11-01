@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util, slugify
 from homeassistant.util.ulid import ulid_now
 
 from .const import (
+    ADHOC_RETENTION_DAYS,
     DEFAULT_LOCATION,
     DEFAULT_SECTIONS,
     DOMAIN,
@@ -110,6 +111,8 @@ class KuechenplanStore:
         self.audit: dict[str, Any] = {"last_at": None, "counted": 0}
         self.preferences = ""
         self.store_sections: dict[str, list[str]] = {}
+        self.adhoc: list[dict[str, Any]] = []
+        self.cook_log: list[dict[str, Any]] = []
         self.shopping: list[dict[str, Any]] = []
 
     async def async_load(self) -> None:
@@ -124,6 +127,8 @@ class KuechenplanStore:
             self.audit = data["audit"]
             self.preferences = data["preferences"]
             self.store_sections = data["store_sections"]
+            self.adhoc = data.get("adhoc", [])
+            self.cook_log = data.get("cook_log", [])
         self.async_refresh(notify=False)
 
     @callback
@@ -131,6 +136,11 @@ class KuechenplanStore:
         """Bring date dependent data up to date, runs at startup and midnight."""
         cutoff = (self.today() - timedelta(days=HISTORY_DAYS)).isoformat()
         self.days = {key: day for key, day in self.days.items() if key >= cutoff}
+        self.cook_log = [meal for meal in self.cook_log if meal["date"] >= cutoff]
+        stale = (
+            dt_util.utcnow() - timedelta(days=ADHOC_RETENTION_DAYS)
+        ).isoformat()
+        self.adhoc = [meal for meal in self.adhoc if meal["created_at"] >= stale]
         self._rebuild_shopping()
         if notify:
             self._async_changed()
@@ -392,6 +402,86 @@ class KuechenplanStore:
                     break
         return used
 
+    # --- Ad hoc meals ---
+
+    def adhoc_view(self, meal: dict[str, Any]) -> dict[str, Any]:
+        """Return an ad hoc meal with its recipe, ready for display."""
+        recipe = self.recipes[meal["recipe_id"]]
+        return {
+            **meal,
+            "title": recipe["name"],
+            "minutes": recipe["minutes"],
+            "rice": recipe["rice"],
+            "recipe": recipe,
+        }
+
+    @callback
+    def async_add_adhoc(
+        self,
+        recipe_id: str | None = None,
+        recipe: dict[str, Any] | None = None,
+        servings: int | None = None,
+        shop: bool = True,
+    ) -> dict[str, Any]:
+        """Add a meal outside the plan, its ingredients join the shopping lists."""
+        if recipe:
+            recipe_id = self._store_recipe(recipe)
+        if not recipe_id or recipe_id not in self.recipes:
+            raise HomeAssistantError(f"Unknown recipe: {recipe_id}")
+        meal = {
+            "id": ulid_now(),
+            "recipe_id": recipe_id,
+            "servings": servings or self.recipes[recipe_id]["servings"],
+            "shop": shop,
+            "created_at": dt_util.utcnow().isoformat(),
+        }
+        self.adhoc.append(meal)
+        self._rebuild_shopping()
+        self._async_changed()
+        return self.adhoc_view(meal)
+
+    def _find_adhoc(self, meal_id: str) -> dict[str, Any]:
+        """Return an ad hoc meal."""
+        for meal in self.adhoc:
+            if meal["id"] == meal_id:
+                return meal
+        raise HomeAssistantError(f"Unknown ad hoc meal: {meal_id}")
+
+    @callback
+    def async_remove_adhoc(self, meal_id: str) -> None:
+        """Drop an ad hoc meal and what it still needed."""
+        self.adhoc.remove(self._find_adhoc(meal_id))
+        self._rebuild_shopping()
+        self._async_changed()
+
+    @callback
+    def async_cook_adhoc(
+        self,
+        meal_id: str,
+        rating: int | None = None,
+        comment: str | None = None,
+        servings: int | None = None,
+    ) -> dict[str, Any]:
+        """Record an ad hoc meal as cooked and use up the ingredients."""
+        meal = self._find_adhoc(meal_id)
+        used = self._consume_inventory(meal, servings)
+        self.adhoc.remove(meal)
+        self.cook_log.append(
+            {
+                "date": self.today().isoformat(),
+                "recipe_id": meal["recipe_id"],
+                "title": self.recipes[meal["recipe_id"]]["name"],
+                "servings": servings or meal["servings"],
+                "status": STATUS_COOKED,
+                "rating": rating,
+                "comment": comment,
+                "note": "",
+            }
+        )
+        self._rebuild_shopping()
+        self._async_changed()
+        return {"status": STATUS_COOKED, "taken_from_inventory": used}
+
     # --- Shopping ---
 
     def sections(self, store: str) -> list[str]:
@@ -418,6 +508,18 @@ class KuechenplanStore:
                 stock[key] = stock.get(key, 0) + item["amount"]
 
         rows: dict[tuple[str, str | None], dict[str, Any]] = {}
+        # Ad hoc meals come first, they are cooked before anything planned.
+        for meal in self.adhoc:
+            recipe = self.recipes.get(meal["recipe_id"])
+            if not recipe or not meal["shop"]:
+                continue
+            factor = meal["servings"] / recipe["servings"]
+            now = {"date": today.isoformat(), "offers": []}
+            for ingredient in recipe["ingredients"]:
+                if not ingredient["staple"]:
+                    self._add_need(
+                        rows, now, recipe, ingredient, factor, stock, maybe_home, today
+                    )
         for key in sorted(self.days):
             day = self.days[key]
             recipe = self._meal_recipe(day)
@@ -481,6 +583,10 @@ class KuechenplanStore:
                 return
         elif any(key[0] == name and value > EPSILON for key, value in stock.items()):
             return
+        other_unit = any(
+            key[0] == name and key[1] != unit and value > EPSILON
+            for key, value in stock.items()
+        )
 
         store = ingredient["store"]
         offer = None
@@ -511,7 +617,7 @@ class KuechenplanStore:
                 "offer": None,
                 "for": [],
                 "from_stock": 0.0,
-                "maybe_home": name in maybe_home,
+                "maybe_home": name in maybe_home or other_unit,
                 "done": False,
             },
         )
@@ -844,13 +950,108 @@ class KuechenplanStore:
             "expiring": self.expiring(),
             "locations": LOCATIONS,
             "audit": self.audit_view(),
+            "adhoc": [self.adhoc_view(meal) for meal in self.adhoc],
+            "recipes": [
+                {
+                    **self.recipes[item["id"]],
+                    **item,
+                    **self.recipe_availability(self.recipes[item["id"]]),
+                }
+                for item in sorted(
+                    self._recipe_stats(), key=lambda item: name_key(item["name"])
+                )
+            ],
         }
 
-    def planning_context(self) -> dict[str, Any]:
-        """Return everything a planner needs to know."""
-        today = self.today()
-        recent = self.days_between(today - timedelta(days=RECENT_MEAL_DAYS), today)
-        history = sorted(self.days.values(), key=lambda day: day["date"])
+    def recipe_availability(
+        self, recipe: dict[str, Any], servings: int | None = None
+    ) -> dict[str, Any]:
+        """Compare a recipe with the inventory."""
+        factor = (servings or recipe["servings"]) / recipe["servings"]
+        expiring = {name_key(item["name"]) for item in self.expiring()}
+        stock_per_ingredient = []
+        missing = []
+        maybe = []
+        uses_expiring = []
+        for ingredient in recipe["ingredients"]:
+            key = name_key(ingredient["name"])
+            stock = [item for item in self.inventory if name_key(item["name"]) == key]
+            same_unit = [
+                item
+                for item in stock
+                if item["unit"] == ingredient["unit"] and item["amount"] is not None
+            ]
+            have = sum(item["amount"] for item in same_unit)
+            optional = ingredient["staple"] or "optional" in key
+            stock_per_ingredient.append(
+                {
+                    "have": have,
+                    "present": bool(same_unit),
+                    "maybe": bool(stock) and not same_unit,
+                    "optional": optional,
+                }
+            )
+            if stock and key in expiring:
+                uses_expiring.append(ingredient["name"])
+            if optional:
+                continue
+            need = ingredient["amount"]
+            need = None if need is None else need * factor
+            if stock and not same_unit:
+                maybe.append(ingredient["name"])
+            elif not same_unit or (need is not None and have < need - EPSILON):
+                still = None if need is None else need - have
+                amount = format_amount(still, ingredient["unit"])
+                missing.append(
+                    f"{amount} {ingredient['name']}" if amount else ingredient["name"]
+                )
+        return {
+            "stock": stock_per_ingredient,
+            "missing": missing,
+            "maybe": maybe,
+            "uses_expiring": uses_expiring,
+        }
+
+    def what_can_i_cook(
+        self, max_missing: int = 3, servings: int | None = None
+    ) -> dict[str, Any]:
+        """Rank the stored recipes by how well they fit what is at home."""
+        options = []
+        for stats in self._recipe_stats():
+            availability = self.recipe_availability(
+                self.recipes[stats["id"]], servings
+            )
+            if len(availability["missing"]) <= max_missing:
+                options.append(
+                    {
+                        **stats,
+                        "servings": servings or self.recipes[stats["id"]]["servings"],
+                        "missing": availability["missing"],
+                        "maybe_at_home": availability["maybe"],
+                        "uses_expiring": availability["uses_expiring"],
+                    }
+                )
+        options.sort(
+            key=lambda item: (
+                item["average_rating"] is not None and item["average_rating"] < 1.5,
+                len(item["missing"]),
+                -len(item["uses_expiring"]),
+                item["last_cooked"] or "",
+            )
+        )
+        return {
+            "can_cook_now": [item for item in options if not item["missing"]],
+            "needs_a_little": [item for item in options if item["missing"]],
+            "inventory": self.sorted_inventory(),
+            "expiring_soon": self.expiring(),
+            "audit": self.audit_view(),
+        }
+
+    def _recipe_stats(self) -> list[dict[str, Any]]:
+        """Return the stored recipes with how they went so far."""
+        history = sorted(
+            [*self.days.values(), *self.cook_log], key=lambda day: day["date"]
+        )
         recipes = []
         for recipe in self.recipes.values():
             own = [day for day in history if day.get("recipe_id") == recipe["id"]]
@@ -868,6 +1069,13 @@ class KuechenplanStore:
                     else None,
                 }
             )
+        return recipes
+
+    def planning_context(self) -> dict[str, Any]:
+        """Return everything a planner needs to know."""
+        today = self.today()
+        recent = self.days_between(today - timedelta(days=RECENT_MEAL_DAYS), today)
+        since = (today - timedelta(days=RECENT_MEAL_DAYS)).isoformat()
         return {
             "today": today.isoformat(),
             "weekday": today.strftime("%A"),
@@ -886,8 +1094,21 @@ class KuechenplanStore:
                 self._compact_day(day)
                 for day in recent
                 if day["status"] != STATUS_PLANNED or day["date"] < today.isoformat()
+            ]
+            + [
+                self._compact_day(meal)
+                for meal in self.cook_log
+                if meal["date"] >= since
             ],
-            "recipes": recipes,
+            "adhoc_meals": [
+                {
+                    "id": meal["id"],
+                    "recipe_id": meal["recipe_id"],
+                    "servings": meal["servings"],
+                }
+                for meal in self.adhoc
+            ],
+            "recipes": self._recipe_stats(),
             "inventory": self.sorted_inventory(),
             "expiring_soon": self.expiring(),
             "audit": self.audit_view(),
@@ -948,4 +1169,6 @@ class KuechenplanStore:
             "audit": self.audit,
             "preferences": self.preferences,
             "store_sections": self.store_sections,
+            "adhoc": self.adhoc,
+            "cook_log": self.cook_log,
         }

@@ -193,6 +193,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: KuechenplanConfigEntry) 
         sidebar_icon="mdi:silverware-fork-knife",
         module_url=f"{STATIC_URL}/{PANEL_FILE.name}?v={version}",
         require_admin=False,
+        handle_safe_area=True,
     )
     entry.async_on_unload(lambda: frontend.async_remove_panel(hass, PANEL_URL_PATH))
     entry.async_on_unload(entry.add_update_listener(_async_reload))

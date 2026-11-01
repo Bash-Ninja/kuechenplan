@@ -9,6 +9,10 @@ Kalender, Einkaufslisten, Sensoren und die Küchen-Ansicht folgen automatisch au
   der Vorrat wird abgezogen, Abgehaktes und eigene Einträge bleiben beim Neuplanen erhalten.
 - **Frischekauf:** Frische Zutaten für Mahlzeiten nach dem Frischetag wandern auf diesen Tag und
   ziehen mit um, wenn Tage getauscht werden.
+- **Spontan kochen:** Rezept antippen, Fehlendes landet sofort auf der Einkaufsliste, danach direkt in den
+  Kochmodus. Der Wochenplan bleibt unberührt, gekocht wird trotzdem für künftige Pläne gemerkt.
+- **Was kann ich kochen?** Rezepte nach dem sortiert, was da ist und was bald abläuft, in der App und über
+  das Tool `what_can_i_cook`, mit dem Claude auch neue Gerichte aus dem Vorrat vorschlagen kann.
 - **Inventur:** Geführte Zählung in der App, oder per Chat und Foto über Claude. Was bald abläuft,
   bekommt der Planer zuerst genannt.
 
@@ -28,8 +32,9 @@ Benötigt Home Assistant 2026.10 oder neuer.
 
 | Zweck | Tools |
 |---|---|
-| Lesen | `get_planning_context`, `get_plan`, `get_recipe`, `search_recipes`, `get_shopping_list`, `get_inventory` |
+| Lesen | `get_planning_context`, `get_plan`, `get_recipe`, `search_recipes`, `get_shopping_list`, `get_inventory`, `what_can_i_cook` |
 | Planen | `apply_week_plan`, `set_day`, `clear_day`, `swap_days`, `mark_cooked`, `upsert_recipe`, `set_preferences` |
+| Spontan | `add_adhoc_meal`, `remove_adhoc_meal`, `mark_adhoc_cooked` |
 | Einkauf | `add_shopping_items`, `set_shopping_item_done`, `remove_shopping_items`, `set_store_sections` |
 | Vorrat | `update_inventory`, `record_inventory_audit` |
 

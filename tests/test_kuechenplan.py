@@ -78,13 +78,13 @@ class Client:
         data = await response.json()
         return {tool["name"]: tool for tool in data["result"]["tools"]}
 
-    async def call(self, name: str, **arguments) -> dict:
+    async def call(self, name: str, /, **arguments) -> dict:
         """Call a tool that should succeed."""
         failed, result = await self.call_raw(name, **arguments)
         assert not failed, result
         return result
 
-    async def call_raw(self, name: str, **arguments) -> tuple[bool, dict | str]:
+    async def call_raw(self, name: str, /, **arguments) -> tuple[bool, dict | str]:
         """Call a tool, returning whether it failed and its result."""
         response = await self._http.post(
             "/api/mcp",
@@ -421,3 +421,100 @@ async def test_services_and_websocket(
 
     result, _ = await call("clear_day", date=TUESDAY)
     assert result["success"] is False
+
+
+async def test_adhoc_meal_shops_and_cooks_without_touching_the_plan(
+    hass: HomeAssistant, mcp: Client
+) -> None:
+    """A spontaneous meal joins the lists, cooking it ends up in the history."""
+    await mcp.call("apply_week_plan", days=[{"date": MONDAY, "recipe": PAD_KRA_PAO}])
+    await mcp.call("update_inventory", items=[{"name": "Paprika", "amount": 1, "unit": "Stk."}])
+
+    meal = await mcp.call("add_adhoc_meal", recipe=LACHS)
+    plan = await mcp.call("get_plan")
+    assert [day["date"] for day in plan["days"]] == [MONDAY]
+    items = by_name((await mcp.call("get_shopping_list", store="rewe"))["items"])
+    assert items["Lachsfilet"]["buy_on"] is None  # Fresh, but needed now
+    assert items["Eier"]["amount"] == "4 Stk."
+    assert items["Paprika"]["amount"] == "2 Stk."  # One is at home
+    assert {item["name"] for item in meal["shopping"]} >= {"Lachsfilet", "Eier"}
+
+    result = await mcp.call("mark_adhoc_cooked", id=meal["id"], rating=3)
+    assert result["taken_from_inventory"] == ["1 Stk. Paprika"]
+    items = by_name((await mcp.call("get_shopping_list", store="rewe"))["items"])
+    assert "Lachsfilet" not in items
+    assert items["Eier"]["amount"] == "2 Stk."
+
+    context = await mcp.call("get_planning_context")
+    assert context["adhoc_meals"] == []
+    assert context["recent_meals"][-1]["title"] == "Lachs"
+    lachs = next(item for item in context["recipes"] if item["name"] == "Lachs")
+    assert lachs["last_cooked"] == "2026-11-01"
+    assert lachs["average_rating"] == 3
+
+
+async def test_adhoc_without_shopping_and_removal(mcp: Client) -> None:
+    """With everything at home nothing is listed, removing frees the list again."""
+    await mcp.call("upsert_recipe", **LACHS)
+    meal = await mcp.call("add_adhoc_meal", recipe_id="lachs", shop=False, servings=4)
+    assert meal["shopping"] == []
+    assert (await mcp.call("get_shopping_list"))["items"] == []
+
+    second = await mcp.call("add_adhoc_meal", recipe_id="lachs")
+    assert (await mcp.call("get_shopping_list", store="rewe"))["items"]
+    await mcp.call("remove_adhoc_meal", id=second["id"])
+    assert (await mcp.call("get_shopping_list"))["items"] == []
+
+    failed, error = await mcp.call_raw("add_adhoc_meal", recipe_id="gibt-es-nicht")
+    assert failed
+    assert "gibt-es-nicht" in error
+
+
+async def test_old_stored_data_without_adhoc_still_loads(
+    hass: HomeAssistant, mcp: Client, hass_storage
+) -> None:
+    """Data written before ad hoc meals existed keeps working."""
+    await mcp.call("upsert_recipe", **LACHS)
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    hass_storage[DOMAIN]["data"].pop("adhoc")
+    hass_storage[DOMAIN]["data"].pop("cook_log")
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert (await mcp.call("search_recipes", query="Lachs"))["recipes"]
+
+
+async def test_what_can_i_cook_ranks_by_what_is_at_home(mcp: Client) -> None:
+    """Recipes that fit come first, what expires soon decides between them."""
+    await mcp.call("upsert_recipe", **PAD_KRA_PAO)
+    await mcp.call("upsert_recipe", **LACHS)
+    await mcp.call(
+        "update_inventory",
+        items=[
+            {"name": "Hackfleisch", "amount": 500, "unit": "g", "best_before": "2026-11-02"},
+            {"name": "Thai-Basilikum", "amount": 1, "unit": "Bund"},
+            {"name": "Eier", "amount": 1, "unit": "Stk."},
+            {"name": "Paprika", "amount": 1, "unit": "kg"},
+        ],
+    )
+
+    result = await mcp.call("what_can_i_cook")
+    assert result["can_cook_now"] == []
+    first, second = result["needs_a_little"]
+    assert first["name"] == "Pad Kra Pao"
+    assert first["missing"] == ["1 Stk. Eier"]  # Only what is still needed
+    assert first["uses_expiring"] == ["Hackfleisch"]
+    assert second["name"] == "Lachs"
+    assert second["maybe_at_home"] == ["Paprika"]  # Other unit, cannot be compared
+    assert "Lachsfilet" in " ".join(second["missing"])
+
+    await mcp.call("update_inventory", items=[{"name": "Eier", "amount": 6, "unit": "Stk."}])
+    result = await mcp.call("what_can_i_cook", max_missing=0)
+    assert [item["name"] for item in result["can_cook_now"]] == ["Pad Kra Pao"]
+    assert result["needs_a_little"] == []
+
+    # Doubling the servings needs more than is at home.
+    result = await mcp.call("what_can_i_cook", servings=4)
+    pad = next(item for item in result["needs_a_little"] if item["name"] == "Pad Kra Pao")
+    assert "100 g Hackfleisch" in pad["missing"]
