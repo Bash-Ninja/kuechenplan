@@ -2,7 +2,6 @@
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import llm
-from homeassistant.util.json import JsonObjectType
 
 from .const import DOMAIN, NAME
 from .operations import OPERATIONS, Operation
@@ -30,6 +29,7 @@ class OperationTool(llm.Tool):
         self._store = store
         self._operation = operation
         self.name = operation.name
+        self.integration = DOMAIN
         self.description = operation.description
         self.parameters = operation.schema
         self.annotations = llm.ToolAnnotations(
@@ -44,9 +44,11 @@ class OperationTool(llm.Tool):
         hass: HomeAssistant,
         tool_input: llm.ToolInput,
         llm_context: llm.LLMContext,
-    ) -> JsonObjectType:
+    ) -> llm.ToolResult:
         """Run the operation."""
-        return self._operation.run(self._store, tool_input.tool_args)
+        return llm.ToolResult(
+            data=self._operation.run(self._store, tool_input.tool_args)
+        )
 
 
 class KuechenplanAPI(llm.API):
